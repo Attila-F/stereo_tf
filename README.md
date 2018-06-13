@@ -3,6 +3,8 @@ Tensorflow implementation of Luo et. al.: Efficient Deep Learning for Stereo Mat
 
 To use:
 
+Edit config.py
+
 -- Preprocess data: python stereo.py --mode preprocess
 -- Train model: python stereo.py --mode train
 -- Test model: python stereo.py --mode test
