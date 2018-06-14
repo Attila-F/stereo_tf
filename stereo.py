@@ -333,77 +333,81 @@ def test_model():
     boundaries = [24000, 32000]
     rates = [0.01, 0.01/5, 0.01/25]
     learning_rate = tf.train.piecewise_constant(global_step, boundaries, rates)
-
-    image_2_path = cfg.KITTIPATH+'/training/image_2/000005_10.png'
-    image_3_path = cfg.KITTIPATH+'/training/image_3/000005_10.png'
-    disparity_image_path = cfg.KITTIPATH+'/training/disp_noc_0/000005_10.png'
-
-    raw_image_2 = np.expand_dims(ndimage.imread(image_2_path, mode='RGB'), axis=0)
-    raw_image_3 = np.expand_dims(ndimage.imread(image_3_path, mode='RGB'), axis=0)
-    norm_image_2 = (raw_image_2-np.mean(raw_image_2))/np.std(raw_image_2)
-    norm_image_3 = (raw_image_3-np.mean(raw_image_3))/np.std(raw_image_3)
-    disparity_image = ndimage.imread(disparity_image_path, mode='I')/255
     
     # Initialize placeholders
-    ph_patch_2, ph_patch_3, ph_label, ph_is_training = init_placeholders(raw_image_2.shape[1], raw_image_2.shape[2], cfg.CHANNELS, 0)
+    ph_patch_2, ph_patch_3, ph_label, ph_is_training = init_placeholders(375, 1242, cfg.CHANNELS, 0)
 
     # Get graph
     _, _, _, out_2, out_3 = build_graph(patch_2=ph_patch_2,
-                                       patch_3=ph_patch_3,
-                                       gt_v=ph_label,
-                                       channels=cfg.CHANNELS,
-                                       filters=cfg.FILTERS,
-                                       max_disparity=cfg.MAX_DISPARITY,
-                                       learning_rate=learning_rate,
-                                       global_step=global_step,
-                                       is_training=ph_is_training)
+                                    patch_3=ph_patch_3,
+                                    gt_v=ph_label,
+                                    channels=cfg.CHANNELS,
+                                    filters=cfg.FILTERS,
+                                    max_disparity=cfg.MAX_DISPARITY,
+                                    learning_rate=learning_rate,
+                                    global_step=global_step,
+                                    is_training=ph_is_training)
 
     #run session
     sess = tf.Session(config=tf.ConfigProto())
     sess.run(tf.global_variables_initializer())
     saver = tf.train.Saver()
     saver.restore(sess = sess, save_path= cfg.SAVE_PATH.format(cfg.TEST_ITER))
-    
-    vec_2, vec_3 = sess.run([out_2,out_3], feed_dict={ph_patch_2:norm_image_2,
-                                                        ph_patch_3:norm_image_3,
-                                                        ph_is_training:False})
-    
-    output = np.zeros([cfg.MAX_DISPARITY, vec_2.shape[1], vec_2.shape[2]])
 
-    for i in tqdm(range(cfg.MAX_DISPARITY)):
-            slice_2 = vec_2[:,:,i:vec_2.shape[2],:]
-            slice_3 = vec_3[:,:,0:vec_2.shape[2]-i,:]
-            inner_product = np.sum(np.multiply(slice_2, slice_3), axis=3)
-            output[i,:,i:vec_2.shape[2]] = inner_product
+    for k in range(200):
+        im = str(k).zfill(6)
 
-    max_disp_index = np.argmax(output, axis=0)
+        image_2_path = cfg.KITTIPATH+'/training/image_2/'+im+'_10.png'
+        image_3_path = cfg.KITTIPATH+'/training/image_3/'+im+'_10.png'
+        disparity_image_path = cfg.KITTIPATH+'/training/disp_noc_0/'+im+'_10.png'
 
-    # convert to colour
-    color_map = disparity_to_color(np.float32(max_disp_index))
-    cmap = np.uint8(np.moveaxis(color_map, 0, 2)*128)
-    color_image = Image.fromarray(cmap, 'RGB')
-    color_image.save('tf_img_{}.png'.format(cfg.TEST_ITER))
+        raw_image_2 = np.expand_dims(ndimage.imread(image_2_path, mode='RGB'), axis=0)
+        raw_image_3 = np.expand_dims(ndimage.imread(image_3_path, mode='RGB'), axis=0)
+        norm_image_2 = (raw_image_2-np.mean(raw_image_2))/np.std(raw_image_2)
+        norm_image_3 = (raw_image_3-np.mean(raw_image_3))/np.std(raw_image_3)
+        disparity_image = ndimage.imread(disparity_image_path, mode='I')/255
+        
+        vec_2, vec_3 = sess.run([out_2,out_3], feed_dict={ph_patch_2:norm_image_2,
+                                                            ph_patch_3:norm_image_3,
+                                                            ph_is_training:False})
+        
+        output = np.zeros([cfg.MAX_DISPARITY, vec_2.shape[1], vec_2.shape[2]])
 
-    color_map = disparity_to_color(np.float32(disparity_image))
-    cmap = np.uint8(np.moveaxis(color_map, 0, 2)*128)
-    color_image = Image.fromarray(cmap, 'RGB')
-    color_image.save('tf_img_gt_{}.png'.format(cfg.TEST_ITER))
+        for i in tqdm(range(cfg.MAX_DISPARITY)):
+                slice_2 = vec_2[:,:,i:vec_2.shape[2],:]
+                slice_3 = vec_3[:,:,0:vec_2.shape[2]-i,:]
+                inner_product = np.sum(np.multiply(slice_2, slice_3), axis=3)
+                output[i,:,i:vec_2.shape[2]] = inner_product
 
-    print('2px error: ', get_pixel_error(2, max_disp_index, disparity_image))
-    print('3px error: ', get_pixel_error(3, max_disp_index, disparity_image))
-    print('4px error: ', get_pixel_error(4, max_disp_index, disparity_image))
-    print('5px error: ', get_pixel_error(5, max_disp_index, disparity_image))
-    print('7px error: ', get_pixel_error(7, max_disp_index, disparity_image))
-    print('10px error: ', get_pixel_error(10, max_disp_index, disparity_image))
-    print('20px error: ', get_pixel_error(20, max_disp_index, disparity_image))
-    print('30px error: ', get_pixel_error(30, max_disp_index, disparity_image))
+        max_disp_index = np.argmax(output, axis=0)
 
-    err = []
-    for i in tqdm(range(128)):
-        err.append(get_pixel_error(i, max_disp_index, disparity_image))
+        # convert to colour
+        color_map = disparity_to_color(np.float32(max_disp_index))
+        cmap = np.uint8(np.moveaxis(color_map, 0, 2)*128)
+        color_image = Image.fromarray(cmap, 'RGB')
+        color_image.save('out/{}_pred.png'.format(im))
 
-    plt.plot(err)
-    plt.savefig('pxerror_{}.png'.format(cfg.TEST_ITER))
+        color_map = disparity_to_color(np.float32(disparity_image))
+        cmap = np.uint8(np.moveaxis(color_map, 0, 2)*128)
+        color_image = Image.fromarray(cmap, 'RGB')
+        color_image.save('out/{}_gt.png'.format(im))
+
+        print('2px error: ', get_pixel_error(2, max_disp_index, disparity_image))
+        print('3px error: ', get_pixel_error(3, max_disp_index, disparity_image))
+        print('4px error: ', get_pixel_error(4, max_disp_index, disparity_image))
+        print('5px error: ', get_pixel_error(5, max_disp_index, disparity_image))
+        print('7px error: ', get_pixel_error(7, max_disp_index, disparity_image))
+        print('10px error: ', get_pixel_error(10, max_disp_index, disparity_image))
+        print('20px error: ', get_pixel_error(20, max_disp_index, disparity_image))
+        print('30px error: ', get_pixel_error(30, max_disp_index, disparity_image))
+
+        err = []
+        for i in tqdm(range(128)):
+            err.append(get_pixel_error(i, max_disp_index, disparity_image))
+
+        plt.figure(k)
+        plt.plot(err)
+        plt.savefig('out/{}_pxerror.png'.format(im))
     
 # some global variables
 if __name__ == '__main__':
@@ -416,3 +420,4 @@ if __name__ == '__main__':
         test_model()
     else:
         print('Mode not implemented. See --help.')
+
