@@ -5,6 +5,7 @@ from tqdm import tqdm
 from scipy import ndimage
 from PIL import Image
 import argparse
+import matplotlib.pyplot as plt
 
 import config as cfg
 
@@ -162,19 +163,6 @@ def get_random_patch(list_2, list_3, list_label, list_valid_pixels, receptive_fi
         x = list_valid_pixels[i_img][i_pix][0]
         y = list_valid_pixels[i_img][i_pix][1]
 
-        '''
-        color_image = Image.fromarray(np.uint8(list_2[i_img]), 'RGB')
-        color_image.save('tf_patch_2_{}.png'.format(1))
-        color_image = Image.fromarray(np.uint8(list_3[i_img]), 'RGB')
-        color_image.save('tf_patch_3_{}.png'.format(1))
-        color_map = disparity_to_color(np.float32(list_label[i_img]))
-        cmap = np.uint8(np.moveaxis(color_map, 0, 2)*128)
-        color_image = Image.fromarray(cmap, 'RGB')
-        color_image.save('tf_disp_{}.png'.format(1))
-
-        quit()
-        '''
-
         patch_2 = list_2[i_img][x - halfrecp : x + halfrecp + 1,
                                 y - halfrecp : y + halfrecp + 1]
         patch_3 = list_3[i_img][x - halfrecp : x + halfrecp + 1,
@@ -191,6 +179,17 @@ def get_random_patch(list_2, list_3, list_label, list_valid_pixels, receptive_fi
         batch_label = np.concatenate([batch_label, label_v], axis=0)
 
     return batch_label, batch_2, batch_3
+
+def get_random_images(list_2, list_3, list_label, receptive_field_size):
+    halfrecp=int(receptive_field_size/2)
+
+    i_img = np.random.randint(len(list_2))
+
+    image_2 = list_2[i_img]
+    image_3 = list_3[i_img]
+    image_d = list_label[i_img]
+
+    return np.expand_dims(image_d, 0), np.expand_dims(image_2,0), np.expand_dims(image_3,0)
 
 #############################################
 ################# Layers ####################
@@ -219,15 +218,17 @@ def build_graph(patch_2, patch_3, gt_v, channels, filters, max_disparity, learni
         out_2 = BaseNet(patch=patch_2,reuse=False, is_training=is_training, channels=channels, filters=filters)
         out_3 = BaseNet(patch=patch_3,reuse=True, is_training=is_training, channels=channels, filters=filters)
     
-    #(?, 1, 1, 64) (?, 1, 64, 129)
-    inner_product = tf.matmul(out_2, tf.transpose(out_3, perm=[0,1,3,2]))
+    #(?, 1, 1, 64) (?, 1, 129, 64)
+    inner_product = tf.reduce_sum(tf.multiply(out_2, out_3), axis=-1)
+
+
+    #inner_product = tf.matmul(out_2, tf.transpose(out_3, perm=[0,1,3,2]))
     #(?, 1, 1, 129)
     
-    softmax_scores = -tf.nn.log_softmax(inner_product)
+    softmax_scores = -tf.nn.log_softmax(inner_product, axis=-1)
 
-    #pred_scores = softmax_scores[i, gt_disparity[0]-2:gt_disparity[0]+2+1]
     with tf.name_scope('Loss'):
-        loss = tf.reduce_mean(tf.multiply(softmax_scores, gt_v)) # (?,129)*(?,129)-> (?,1)
+        loss = tf.reduce_mean(tf.reduce_sum(tf.multiply(softmax_scores, gt_v), axis=-1)) # (?,129)*(?,129)-> (?,1)
 
     update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
     with tf.control_dependencies(update_ops):
@@ -298,10 +299,10 @@ def train_model():
                                               ph_patch_3:patch_3,
                                               ph_label:label,
                                               ph_is_training:True})
-       
-        if i % 1000 == 0:
         
-            loss_train = sess.run(cross_entropy, feed_dict={ph_patch_2:patch_2,
+        if i+1 % 100 == 0:
+        
+            loss_train, out = sess.run([cross_entropy, output_layer_t], feed_dict={ph_patch_2:patch_2,
                                                                               ph_patch_3:patch_3,
                                                                               ph_label:label,
                                                                               ph_is_training:False})
@@ -319,8 +320,9 @@ def train_model():
                              ph_patch_3:patch_3_val,
                              ph_label:label_val,
                              ph_is_training:False})
-    
-            print('Iter: ', i, 'Val loss: ', loss_val, 'Train loss: ', loss_train)
+
+            print('Iter: ', i, 'Val loss: ', loss_val, 'Train loss: ', loss_train,
+                  'Max prob: ',np.max(np.exp(-out[0])), 'Pred: ',np.argmax(np.exp(-out[0])), 'GT: ', np.argmax(label[0]))
             
             if i % 10000 == 0:
                 saver.save(sess, cfg.SAVE_PATH.format(i))
@@ -391,6 +393,17 @@ def test_model():
     print('3px error: ', get_pixel_error(3, max_disp_index, disparity_image))
     print('4px error: ', get_pixel_error(4, max_disp_index, disparity_image))
     print('5px error: ', get_pixel_error(5, max_disp_index, disparity_image))
+    print('7px error: ', get_pixel_error(7, max_disp_index, disparity_image))
+    print('10px error: ', get_pixel_error(10, max_disp_index, disparity_image))
+    print('20px error: ', get_pixel_error(20, max_disp_index, disparity_image))
+    print('30px error: ', get_pixel_error(30, max_disp_index, disparity_image))
+
+    err = []
+    for i in tqdm(range(128)):
+        err.append(get_pixel_error(i, max_disp_index, disparity_image))
+
+    plt.plot(err)
+    plt.savefig('pxerror_{}.png'.format(cfg.TEST_ITER))
     
 # some global variables
 if __name__ == '__main__':
@@ -403,4 +416,3 @@ if __name__ == '__main__':
         test_model()
     else:
         print('Mode not implemented. See --help.')
-
