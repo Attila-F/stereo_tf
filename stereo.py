@@ -48,10 +48,15 @@ def disparity_to_color(I):
     return np.reshape(K3, (I.shape[1],I.shape[0],3)).T
 
 def get_pixel_error(threshold, pred, gt):
+    gt_map = np.zeros(gt[4:-4, 4:-4].shape)
+    gt_map[gt[4:-4, 4:-4] > 0] = 1
+    gt_sum = np.sum(gt_map)
+
     pixel_error = np.abs(pred-gt[4:-4, 4:-4])
+    pixel_error[gt[4:-4, 4:-4] == 0] = 0
     pixel_error[pixel_error <= threshold] = 0
     pixel_error[pixel_error > threshold] = 1
-    return np.sum(pixel_error)/(pred.shape[0]*pred.shape[1])
+    return np.sum(pixel_error)/gt_sum
 
 #############################################
 ############## Preprocessing ################
@@ -112,17 +117,18 @@ def get_valid_locations(list_d, receptive_field, max_disparity):
     halfrecp = int(receptive_field/2)
     valid_locations = []
     for i in tqdm(range(len(list_d)), desc="Extracting valid pixels"):
-        filt = np.where(list_d[i] != 0)
+        filt = np.where((list_d[i] > 2) & (list_d[i] <= max_disparity - 2))
         filt = list(map(list, zip(*filt)))
         filt = [x_y_pair for x_y_pair in filt if x_y_pair[0] > halfrecp]
         filt = [x_y_pair for x_y_pair in filt if x_y_pair[0] < list_d[i].shape[0] - halfrecp]
-        filt = [x_y_pair for x_y_pair in filt if x_y_pair[1] > halfrecp + max_disparity + list_d[i][x_y_pair[0]][x_y_pair[1]]]
-        filt = [x_y_pair for x_y_pair in filt if x_y_pair[1] < list_d[i].shape[1] - max_disparity - halfrecp]
+        #filt = [x_y_pair for x_y_pair in filt if x_y_pair[1] > halfrecp + max_disparity + list_d[i][x_y_pair[0]][x_y_pair[1]]]
+        filt = [x_y_pair for x_y_pair in filt if x_y_pair[1] > halfrecp + max_disparity]
+        filt = [x_y_pair for x_y_pair in filt if x_y_pair[1] < list_d[i].shape[1] - halfrecp]
         valid_locations.append(filt)
     return valid_locations
 
 def preprocess(): 
-    images_d, images_d_val = split_data(cfg.KITTIPATH, 60)
+    images_d, images_d_val = split_data(cfg.KITTIPATH, 40)
 
     locations = get_valid_locations(images_d,receptive_field,cfg.MAX_DISPARITY)
     locations_val = get_valid_locations(images_d_val,receptive_field,cfg.MAX_DISPARITY)
@@ -156,19 +162,35 @@ def get_random_patch(list_2, list_3, list_label, list_valid_pixels, receptive_fi
         x = list_valid_pixels[i_img][i_pix][0]
         y = list_valid_pixels[i_img][i_pix][1]
 
+        '''
+        color_image = Image.fromarray(np.uint8(list_2[i_img]), 'RGB')
+        color_image.save('tf_patch_2_{}.png'.format(1))
+        color_image = Image.fromarray(np.uint8(list_3[i_img]), 'RGB')
+        color_image.save('tf_patch_3_{}.png'.format(1))
+        color_map = disparity_to_color(np.float32(list_label[i_img]))
+        cmap = np.uint8(np.moveaxis(color_map, 0, 2)*128)
+        color_image = Image.fromarray(cmap, 'RGB')
+        color_image.save('tf_disp_{}.png'.format(1))
+
+        quit()
+        '''
+
         patch_2 = list_2[i_img][x - halfrecp : x + halfrecp + 1,
                                 y - halfrecp : y + halfrecp + 1]
         patch_3 = list_3[i_img][x - halfrecp : x + halfrecp + 1,
-                                y - halfrecp : y + halfrecp + max_disparity + 1]
+                                y - halfrecp - max_disparity : y + halfrecp + 1]
         label_v = np.zeros([1, max_disparity + 1])
-        label_v[:, int(list_label[i_img][x, y]-2):int(list_label[i_img][x, y]+3)] = np.array(loss_weights)
+
+        local_disparity_right_left = int(max_disparity - list_label[i_img][x, y])
+        label_v[:, local_disparity_right_left-2:local_disparity_right_left+3] = np.array(loss_weights)
         #[0, 0, 0, 1/20, 4/20, 10/20, 4/20, 1/20, 0, 0, 0, ... 0]
 
         batch_2 = np.concatenate([batch_2, np.expand_dims(patch_2, axis=0)], axis=0)
+        
         batch_3 = np.concatenate([batch_3, np.expand_dims(patch_3, axis=0)], axis=0)
         batch_label = np.concatenate([batch_label, label_v], axis=0)
 
-    return batch_label, batch_2, batch_3 
+    return batch_label, batch_2, batch_3
 
 #############################################
 ################# Layers ####################
@@ -201,11 +223,11 @@ def build_graph(patch_2, patch_3, gt_v, channels, filters, max_disparity, learni
     inner_product = tf.matmul(out_2, tf.transpose(out_3, perm=[0,1,3,2]))
     #(?, 1, 1, 129)
     
-    softmax_scores = tf.nn.log_softmax(inner_product)
+    softmax_scores = -tf.nn.log_softmax(inner_product)
 
     #pred_scores = softmax_scores[i, gt_disparity[0]-2:gt_disparity[0]+2+1]
     with tf.name_scope('Loss'):
-        loss = -tf.reduce_mean(tf.multiply(softmax_scores, gt_v)) # (?,129)*(?,129)-> (?,1)
+        loss = tf.reduce_mean(tf.multiply(softmax_scores, gt_v)) # (?,129)*(?,129)-> (?,1)
 
     update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
     with tf.control_dependencies(update_ops):
@@ -235,7 +257,7 @@ def train_model():
     starter_learning_rate = 0.01
 
     # Decrease learning rate as in the paper
-    boundaries = [240000, 320000]
+    boundaries = [24000, 32000]
     rates = [0.01, 0.01/5, 0.01/25]
     learning_rate = tf.train.piecewise_constant(global_step, boundaries, rates)
     # Load data  
@@ -256,9 +278,12 @@ def train_model():
     saver = tf.train.Saver()
     sess = tf.Session(config=tf.ConfigProto())
     sess.run(tf.global_variables_initializer())
+    #saver.restore(sess = sess, save_path= cfg.SAVE_PATH.format(cfg.TEST_ITER))
     training_losses, val_losses = [], []
 
-    for i in range(400000):
+    for i in range(40000):
+
+
         
         label, patch_2, patch_3 = get_random_patch(list_2=images_2,
                                                   list_3=images_3,
@@ -268,21 +293,18 @@ def train_model():
                                                   max_disparity=cfg.MAX_DISPARITY,
                                                   batch_size=cfg.BATCH_SIZE,
                                                   loss_weights=cfg.LOSS_WEIGHTS)
-
    
-        _ = sess.run([train_step], feed_dict={ph_patch_2:patch_2,
+        _ = sess.run(train_step, feed_dict={ph_patch_2:patch_2,
                                               ph_patch_3:patch_3,
                                               ph_label:label,
                                               ph_is_training:True})
        
         if i % 1000 == 0:
         
-            loss_t = sess.run([cross_entropy], feed_dict={ph_patch_2:patch_2,
+            loss_train = sess.run(cross_entropy, feed_dict={ph_patch_2:patch_2,
                                                                               ph_patch_3:patch_3,
                                                                               ph_label:label,
                                                                               ph_is_training:False})
-
-            training_losses.append(loss_t)
 
             label_val, patch_2_val, patch_3_val = get_random_patch(list_2=images_2_val,
                                                                     list_3=images_3_val,
@@ -293,32 +315,32 @@ def train_model():
                                                                     batch_size=cfg.BATCH_SIZE,
                                                                     loss_weights=cfg.LOSS_WEIGHTS)
 
-            loss_v = sess.run([cross_entropy], feed_dict={ph_patch_2:patch_2_val,
+            loss_val = sess.run(cross_entropy, feed_dict={ph_patch_2:patch_2_val,
                              ph_patch_3:patch_3_val,
                              ph_label:label_val,
                              ph_is_training:False})
-
-            val_losses.append(loss_v)
     
-            print('Iter: ', i, 'Test loss: ', loss_t, 'Train loss: ', loss_t)
+            print('Iter: ', i, 'Val loss: ', loss_val, 'Train loss: ', loss_train)
             
-            if i % 50000 == 0:
+            if i % 10000 == 0:
                 saver.save(sess, cfg.SAVE_PATH.format(i))
 
 def test_model():
     global_step = tf.Variable(0, trainable=False)
-    starter_learning_rate = 0.01
-    learning_rate = tf.train.exponential_decay(starter_learning_rate, global_step, 400, 0.996, staircase=True)
+
+    boundaries = [24000, 32000]
+    rates = [0.01, 0.01/5, 0.01/25]
+    learning_rate = tf.train.piecewise_constant(global_step, boundaries, rates)
 
     image_2_path = cfg.KITTIPATH+'/training/image_2/000005_10.png'
     image_3_path = cfg.KITTIPATH+'/training/image_3/000005_10.png'
-    disparity_image_path = cfg.KITTIPATH+'/training/disp_noc_1/000005_10.png'
+    disparity_image_path = cfg.KITTIPATH+'/training/disp_noc_0/000005_10.png'
 
     raw_image_2 = np.expand_dims(ndimage.imread(image_2_path, mode='RGB'), axis=0)
     raw_image_3 = np.expand_dims(ndimage.imread(image_3_path, mode='RGB'), axis=0)
     norm_image_2 = (raw_image_2-np.mean(raw_image_2))/np.std(raw_image_2)
     norm_image_3 = (raw_image_3-np.mean(raw_image_3))/np.std(raw_image_3)
-    disparity_image = ndimage.imread(image_3_path, mode='I')/255
+    disparity_image = ndimage.imread(disparity_image_path, mode='I')/255
     
     # Initialize placeholders
     ph_patch_2, ph_patch_3, ph_label, ph_is_training = init_placeholders(raw_image_2.shape[1], raw_image_2.shape[2], cfg.CHANNELS, 0)
@@ -360,7 +382,15 @@ def test_model():
     color_image = Image.fromarray(cmap, 'RGB')
     color_image.save('tf_img_{}.png'.format(cfg.TEST_ITER))
 
+    color_map = disparity_to_color(np.float32(disparity_image))
+    cmap = np.uint8(np.moveaxis(color_map, 0, 2)*128)
+    color_image = Image.fromarray(cmap, 'RGB')
+    color_image.save('tf_img_gt_{}.png'.format(cfg.TEST_ITER))
+
     print('2px error: ', get_pixel_error(2, max_disp_index, disparity_image))
+    print('3px error: ', get_pixel_error(3, max_disp_index, disparity_image))
+    print('4px error: ', get_pixel_error(4, max_disp_index, disparity_image))
+    print('5px error: ', get_pixel_error(5, max_disp_index, disparity_image))
     
 # some global variables
 if __name__ == '__main__':
@@ -373,3 +403,4 @@ if __name__ == '__main__':
         test_model()
     else:
         print('Mode not implemented. See --help.')
+
