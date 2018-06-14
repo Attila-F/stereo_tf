@@ -11,7 +11,9 @@ Edit config.py
 
 -- Test model: python stereo.py --mode test
 
-Unsmoothed after 30000 iterations
+
+
+Unsmoothed accuracy after 30000 iterations
 
 2px error:  0.642944731057
 
