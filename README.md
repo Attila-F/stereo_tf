@@ -9,7 +9,7 @@ Edit config.py
 -- Train model: python stereo.py --mode train
 -- Test model: python stereo.py --mode test
 
-Unsmoothed:
+Unsmoothed after 30000 iterations
 2px error:  0.642944731057
 3px error:  0.573093536306
 4px error:  0.525425039494
