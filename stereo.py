@@ -371,7 +371,7 @@ def test_model():
 
         image_2_path = cfg.KITTIPATH+'/training/image_2/'+im+'_10.png'
         image_3_path = cfg.KITTIPATH+'/training/image_3/'+im+'_10.png'
-        disparity_image_path = cfg.KITTIPATH+'/training/disp_noc_0/'+im+'_10.png'
+        disparity_image_path = cfg.KITTIPATH+'/training/disp_occ_0/'+im+'_10.png'
 
         raw_image_2 = np.expand_dims(ndimage.imread(image_2_path, mode='RGB'), axis=0)
         raw_image_3 = np.expand_dims(ndimage.imread(image_3_path, mode='RGB'), axis=0)
@@ -403,6 +403,13 @@ def test_model():
         cmap = np.uint8(np.moveaxis(color_map, 0, 2)*128)
         color_image = Image.fromarray(cmap, 'RGB')
         color_image.save('out/{}_gt.png'.format(im))
+
+        color_map = np.float32(np.abs(max_disp_index-disparity_image[9:-9, 9:-9]))
+        color_map[disparity_image[9:-9, 9:-9] == 0] = 0
+        color_map = disparity_to_color(color_map)
+        cmap = np.uint8(np.moveaxis(color_map, 0, 2)*128)
+        color_image = Image.fromarray(cmap, 'RGB')
+        color_image.save('out/{}_err.png'.format(im))
 
         print('2px error: ', get_pixel_error(2, max_disp_index, disparity_image))
         print('3px error: ', get_pixel_error(3, max_disp_index, disparity_image))
