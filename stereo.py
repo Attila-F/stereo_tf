@@ -50,12 +50,13 @@ def disparity_to_color(I):
     return np.reshape(K3, (I.shape[1],I.shape[0],3)).T
 
 def get_pixel_error(threshold, pred, gt):
-    gt_map = np.zeros(gt[4:-4, 4:-4].shape)
-    gt_map[gt[4:-4, 4:-4] > 0] = 1
+    p = cfg.CONV_LAYERS * int(cfg.KERNEL/2)
+    gt_map = np.zeros(gt[p:-p, p:-p].shape)
+    gt_map[gt[p:-p, p:-p] > 0] = 1
     gt_sum = np.sum(gt_map)
 
-    pixel_error = np.abs(pred-gt[4:-4, 4:-4])
-    pixel_error[gt[4:-4, 4:-4] == 0] = 0
+    pixel_error = np.abs(pred-gt[p:-p, p:-p])
+    pixel_error[gt[p:-p, p:-p] == 0] = 0
     pixel_error[pixel_error <= threshold] = 0
     pixel_error[pixel_error > threshold] = 1
     return np.sum(pixel_error)/gt_sum
@@ -236,7 +237,7 @@ def build_graph(patch_2, patch_3, gt_v, channels, filters, max_disparity, learni
     #inner_product = tf.matmul(out_2, tf.transpose(out_3, perm=[0,1,3,2]))
     #(?, 1, 1, 129)
     
-    softmax_scores = -tf.nn.log_softmax(inner_product, axis=-1)
+    softmax_scores = -tf.nn.log_softmax(inner_product)
 
     with tf.name_scope('Loss'):
         loss = tf.reduce_mean(tf.reduce_sum(tf.multiply(softmax_scores, gt_v), axis=-1)) # (?,129)*(?,129)-> (?,1)
@@ -336,7 +337,7 @@ def train_model():
                   'Max prob: ',np.max(np.exp(-out[0])), 'Pred: ',np.argmax(np.exp(-out[0])), 'GT: ', np.argmax(label[0]))
             
             if (i+1) % 10000 == 0:
-                saver.save(sess, cfg.SAVE_PATH.format(i))
+                saver.save(sess, cfg.SAVE_PATH.format(i+1))
 
 def test_model():
     global_step = tf.Variable(0, trainable=False)
@@ -431,3 +432,4 @@ if __name__ == '__main__':
         test_model()
     else:
         print('Mode not implemented. See --help.')
+
