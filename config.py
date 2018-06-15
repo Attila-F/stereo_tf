@@ -1,9 +1,8 @@
 # Data params
 SAVE_PATH = 'model/iter_{}.tf'
-TEST_ITER = 30000
+TEST_ITER = 40000
 RELATIVE_PATH = True
 KITTIPATH = '/home/fto2bp/stereo/data_scene_flow'
-#KITTIPATH = '/mnt/raid_data/fto2bp/stereo'
 
 MAX_DISPARITY = 128
 
@@ -12,7 +11,7 @@ BATCH_SIZE = 128
 CHANNELS = 3
 FILTERS = 64
 KERNEL = 3
-CONV_LAYERS = 4
+CONV_LAYERS = 9
 
 # Training hyperparameters
 LOSS_WEIGHTS = [0.05, 0.2, 0.5, 0.2, 0.05]
