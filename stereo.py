@@ -22,7 +22,8 @@ def disparity_to_color(I):
     _map = np.array([[0,0, 0, 114], [0, 0, 1, 185], [1, 0, 0, 114], [1, 0, 1, 174], 
                     [0, 1, 0, 114], [0, 1, 1, 185], [1, 1, 0, 114], [1, 1, 1, 0]]
                    )      
-    max_disp = 1.0*I.max()
+    #max_disp = 1.0*I.max()
+    max_disp = 128
     I = np.minimum(I/max_disp, np.ones_like(I))
     
     A = I.transpose()
@@ -206,17 +207,27 @@ def conv(patch, kernel, bias, is_training, reuse, scope):
                                           scope='bn')
         return batch_norm
 
-def BaseNet(patch, reuse, is_training, channels, filters):
-    layer_1 = tf.nn.relu(conv(patch, [3, 3, channels, filters], [filters], is_training, reuse, 'layer_1'))
-    layer_2 = tf.nn.relu(conv(layer_1, [3, 3, filters, filters], [filters], is_training, reuse, 'layer_2'))
-    layer_3 = tf.nn.relu(conv(layer_2, [3, 3, filters, filters], [filters], is_training, reuse,'layer_3'))
-    layer_4 = conv(layer_3, [3, 3, filters, filters], [filters], is_training, reuse, 'layer_4')
+def BaseNet_stat(patch, reuse, is_training, channels, filters, kernel):
+    k = kernel
+    layer_1 = tf.nn.relu(conv(patch, [k, k, channels, filters], [filters], is_training, reuse, 'layer_1'))
+    layer_2 = tf.nn.relu(conv(layer_1, [k, k, filters, filters], [filters], is_training, reuse, 'layer_2'))
+    layer_3 = tf.nn.relu(conv(layer_2, [k, k, filters, filters], [filters], is_training, reuse,'layer_3'))
+    layer_4 = conv(layer_3, [k, k, filters, filters], [filters], is_training, reuse, 'layer_4')
     return layer_4
+
+def BaseNet_dyn(patch, reuse, is_training, channels, filters, kernel):
+    k = kernel
+    layers = []
+    layers.append(tf.nn.relu(conv(patch, [k, k, channels, filters], [filters], is_training, reuse, 'layer_0')))
+    for i in range(1, cfg.CONV_LAYERS):
+        layers.append(tf.nn.relu(conv(layers[i-1], [k, k, filters, filters], [filters], is_training, reuse, 'layer_'+str(i))))
+    return layers[-1]
+
     
 def build_graph(patch_2, patch_3, gt_v, channels, filters, max_disparity, learning_rate, global_step, is_training):
     with tf.variable_scope('Net') as scope:
-        out_2 = BaseNet(patch=patch_2,reuse=False, is_training=is_training, channels=channels, filters=filters)
-        out_3 = BaseNet(patch=patch_3,reuse=True, is_training=is_training, channels=channels, filters=filters)
+        out_2 = BaseNet_dyn(patch=patch_2,reuse=False, is_training=is_training, channels=channels, filters=filters, kernel=cfg.KERNEL)
+        out_3 = BaseNet_dyn(patch=patch_3,reuse=True, is_training=is_training, channels=channels, filters=filters, kernel=cfg.KERNEL)
     
     #(?, 1, 1, 64) (?, 1, 129, 64)
     inner_product = tf.reduce_sum(tf.multiply(out_2, out_3), axis=-1)
@@ -261,8 +272,8 @@ def train_model():
     boundaries = [24000, 32000]
     rates = [0.01, 0.01/5, 0.01/25]
     learning_rate = tf.train.piecewise_constant(global_step, boundaries, rates)
-    # Load data  
-    images_2, images_3, noc_1, images_2_val, images_3_val, noc_1_val, valid_locations, valid_locations_val = load_preprocessed_data()
+
+
     # Initialize placeholders
     ph_patch_2, ph_patch_3, ph_label, ph_is_training = init_placeholders(receptive_field, receptive_field, cfg.CHANNELS, cfg.MAX_DISPARITY)
     train_step, cross_entropy, output_layer_t, _, _ = build_graph(patch_2=ph_patch_2,
@@ -282,10 +293,10 @@ def train_model():
     #saver.restore(sess = sess, save_path= cfg.SAVE_PATH.format(cfg.TEST_ITER))
     training_losses, val_losses = [], []
 
+    # Load data
+    images_2, images_3, noc_1, images_2_val, images_3_val, noc_1_val, valid_locations, valid_locations_val = load_preprocessed_data()
+
     for i in range(40000):
-
-
-        
         label, patch_2, patch_3 = get_random_patch(list_2=images_2,
                                                   list_3=images_3,
                                                   list_label=noc_1,
@@ -300,7 +311,7 @@ def train_model():
                                               ph_label:label,
                                               ph_is_training:True})
         
-        if i+1 % 100 == 0:
+        if (i+1) % 100 == 0:
         
             loss_train, out = sess.run([cross_entropy, output_layer_t], feed_dict={ph_patch_2:patch_2,
                                                                               ph_patch_3:patch_3,
@@ -321,10 +332,10 @@ def train_model():
                              ph_label:label_val,
                              ph_is_training:False})
 
-            print('Iter: ', i, 'Val loss: ', loss_val, 'Train loss: ', loss_train,
+            print('Iter: ', i+1, 'Val loss: ', loss_val, 'Train loss: ', loss_train,
                   'Max prob: ',np.max(np.exp(-out[0])), 'Pred: ',np.argmax(np.exp(-out[0])), 'GT: ', np.argmax(label[0]))
             
-            if i % 10000 == 0:
+            if (i+1) % 10000 == 0:
                 saver.save(sess, cfg.SAVE_PATH.format(i))
 
 def test_model():
@@ -420,4 +431,3 @@ if __name__ == '__main__':
         test_model()
     else:
         print('Mode not implemented. See --help.')
-
